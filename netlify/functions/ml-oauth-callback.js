@@ -25,10 +25,17 @@ exports.handler = async (event) => {
 
     if (!res.ok) {
       const err = await res.text();
-      console.error('Token exchange failed:', err);
+      console.error('Token exchange failed:', res.status, err);
+      console.error('Request body was:', JSON.stringify({
+        grant_type: 'authorization_code',
+        client_id: process.env.ML_CLIENT_ID,
+        client_secret: process.env.ML_CLIENT_SECRET ? '***set(' + process.env.ML_CLIENT_SECRET.length + ')' : '***MISSING',
+        code: code ? code.substring(0, 8) + '...' : 'MISSING',
+        redirect_uri: process.env.ML_REDIRECT_URI,
+      }));
       return {
         statusCode: 302,
-        headers: { Location: (process.env.APP_BASE_URL || '') + '/?error=token_exchange' },
+        headers: { Location: (process.env.APP_BASE_URL || '') + '/?error=token_exchange&detail=' + encodeURIComponent(err.substring(0, 200)) },
         body: '',
       };
     }

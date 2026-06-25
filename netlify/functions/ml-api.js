@@ -141,7 +141,8 @@ exports.handler = async (event) => {
     if (path === '/products' && event.httpMethod === 'GET') {
       const rows = await sql`
         SELECT id, external_id, title, price, currency, stock, status,
-               permalink, thumbnail, listing_type, synced_at
+               permalink, thumbnail, listing_type, style_number,
+               description_text, synced_at
         FROM commerce_products
         WHERE platform = 'meli'
         ORDER BY title

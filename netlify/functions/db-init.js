@@ -118,6 +118,11 @@ exports.handler = async (event) => {
       `CREATE INDEX IF NOT EXISTS idx_commerce_orders_platform ON commerce_orders(platform)`,
       `CREATE INDEX IF NOT EXISTS idx_commerce_orders_status ON commerce_orders(status)`,
       `CREATE INDEX IF NOT EXISTS idx_commerce_orders_date ON commerce_orders(date_created)`,
+
+      `ALTER TABLE commerce_products ADD COLUMN IF NOT EXISTS style_number TEXT`,
+      `ALTER TABLE commerce_products ADD COLUMN IF NOT EXISTS description_text TEXT`,
+      `ALTER TABLE commerce_products ADD COLUMN IF NOT EXISTS images JSONB DEFAULT '[]'`,
+      `CREATE INDEX IF NOT EXISTS idx_commerce_products_style ON commerce_products(style_number)`,
     ];
 
     for (const stmt of statements) {

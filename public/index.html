@@ -8,6 +8,7 @@
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <style>
     body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; }
     .spinner { animation: spin 1s linear infinite; }
@@ -15,6 +16,7 @@
     .fade-in { animation: fadeIn .3s ease-in; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
   </style>
+  <script>if(typeof pdfjsLib!=="undefined")pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";</script>
 </head>
 <body>
   <div id="root"></div>
@@ -176,10 +178,15 @@
       const [loading, setLoading] = useState(true);
       const [syncing, setSyncing] = useState(false);
       const [search, setSearch] = useState('');
+      const [showAdd, setShowAdd] = useState(false);
+      const [showPdf, setShowPdf] = useState(false);
+      const [editProduct, setEditProduct] = useState(null);
 
-      useEffect(() => {
+      const load = useCallback(() => {
         api('/products').then(d => setProducts(d.products || [])).finally(() => setLoading(false));
       }, []);
+
+      useEffect(() => { load(); }, [load]);
 
       const sync = () => {
         setSyncing(true);
@@ -190,8 +197,9 @@
       };
 
       const filtered = products.filter(p =>
-        !search || p.title?.toLowerCase().includes(search.toLowerCase()) ||
-        p.external_id?.toLowerCase().includes(search.toLowerCase())
+        !search || (p.title && p.title.toLowerCase().includes(search.toLowerCase())) ||
+        (p.external_id && p.external_id.toLowerCase().includes(search.toLowerCase())) ||
+        (p.style_number && p.style_number.toLowerCase().includes(search.toLowerCase()))
       );
 
       if (loading) return <Loader />;
@@ -200,48 +208,67 @@
         <div className="space-y-4 fade-in">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-xl font-bold">Products ({products.length})</h2>
-            <div className="flex gap-3">
-              <input
-                type="text"
-                placeholder="Search..."
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-blue-500"
-              />
+            <div className="flex gap-2 flex-wrap">
+              <input type="text" placeholder="Search..." value={search} onChange={e => setSearch(e.target.value)}
+                className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-blue-500" />
+              <button onClick={() => setShowAdd(true)}
+                className="flex items-center gap-1.5 px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-sm rounded-lg transition">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                Add Product
+              </button>
+              <button onClick={() => setShowPdf(true)}
+                className="flex items-center gap-1.5 px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm rounded-lg transition">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" /></svg>
+                Import PDF
+              </button>
               <SyncButton onClick={sync} loading={syncing} label="Sync from ML" />
             </div>
           </div>
+
+          <div className="text-xs text-slate-500">
+            Editing a product here updates Mercado Libre and syncs across all connected platforms.
+          </div>
+
           {filtered.length === 0 ? (
-            <Empty msg={products.length ? 'No matches' : 'No products synced yet. Click "Sync from ML" to pull your listings.'} />
+            <Empty msg={products.length ? 'No matches' : 'No products synced yet. Click "Sync from ML" to pull your listings, or "Add Product" to create new ones.'} />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-left text-slate-400 border-b border-slate-700/50">
                     <th className="py-3 px-3">Image</th>
-                    <th className="py-3 px-3">ID</th>
+                    <th className="py-3 px-3">Style #</th>
                     <th className="py-3 px-3">Title</th>
                     <th className="py-3 px-3 text-right">Price</th>
                     <th className="py-3 px-3 text-right">Stock</th>
                     <th className="py-3 px-3">Status</th>
-                    <th className="py-3 px-3">Type</th>
-                    <th className="py-3 px-3">Link</th>
+                    <th className="py-3 px-3">Platforms</th>
+                    <th className="py-3 px-3">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filtered.map(p => (
-                    <tr key={p.id} className="border-b border-slate-800/50 hover:bg-slate-800/30">
+                    <tr key={p.id} className="border-b border-slate-800/50 hover:bg-slate-800/30 cursor-pointer" onClick={() => setEditProduct(p)}>
                       <td className="py-2 px-3">
-                        {p.thumbnail ? <img src={p.thumbnail} className="w-10 h-10 rounded object-cover" /> : <div className="w-10 h-10 bg-slate-700 rounded" />}
+                        {p.thumbnail ? <img src={p.thumbnail} className="w-10 h-10 rounded object-cover" alt="" /> : <div className="w-10 h-10 bg-slate-700 rounded" />}
                       </td>
-                      <td className="py-2 px-3 font-mono text-xs text-slate-500">{p.external_id}</td>
+                      <td className="py-2 px-3 font-mono text-xs text-amber-400">{p.style_number || '—'}</td>
                       <td className="py-2 px-3 max-w-xs truncate">{p.title}</td>
                       <td className="py-2 px-3 text-right">{fmtMXN(p.price)}</td>
-                      <td className={`py-2 px-3 text-right font-mono ${p.stock <= 3 ? 'text-amber-400' : ''}`}>{p.stock}</td>
+                      <td className={"py-2 px-3 text-right font-mono " + (p.stock <= 3 ? 'text-amber-400' : '')}>{p.stock}</td>
                       <td className="py-2 px-3"><Badge text={p.status} /></td>
-                      <td className="py-2 px-3 text-xs text-slate-500">{p.listing_type}</td>
                       <td className="py-2 px-3">
-                        {p.permalink && <a href={p.permalink} target="_blank" rel="noopener" className="text-blue-400 hover:underline text-xs">View</a>}
+                        <div className="flex gap-1">
+                          <span className="px-1.5 py-0.5 rounded text-xs bg-yellow-500/20 text-yellow-400">ML</span>
+                          <span className="px-1.5 py-0.5 rounded text-xs bg-slate-700/50 text-slate-600">TT</span>
+                          <span className="px-1.5 py-0.5 rounded text-xs bg-slate-700/50 text-slate-600">Meta</span>
+                        </div>
+                      </td>
+                      <td className="py-2 px-3" onClick={e => e.stopPropagation()}>
+                        <div className="flex gap-2">
+                          <button onClick={() => setEditProduct(p)} className="text-blue-400 hover:text-blue-300 text-xs font-medium">Edit</button>
+                          {p.permalink && <a href={p.permalink} target="_blank" rel="noopener" className="text-slate-400 hover:text-slate-300 text-xs" onClick={e => e.stopPropagation()}>View</a>}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -249,6 +276,10 @@
               </table>
             </div>
           )}
+
+          <AddProductModal open={showAdd} onClose={() => setShowAdd(false)} onCreated={load} />
+          <ImportPdfModal open={showPdf} onClose={() => setShowPdf(false)} onImported={load} />
+          <EditProductModal open={!!editProduct} onClose={() => setEditProduct(null)} product={editProduct} onSaved={load} />
         </div>
       );
     }
@@ -417,6 +448,372 @@
             </div>
           </div>
         </div>
+      );
+    }
+
+
+    // --- Modal ---
+    function Modal({ open, onClose, title, children, wide }) {
+      if (!open) return null;
+      return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
+          <div className={`bg-slate-900 border border-slate-700 rounded-xl ${wide ? 'max-w-4xl' : 'max-w-2xl'} w-full max-h-[90vh] overflow-y-auto m-4`} onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-5 border-b border-slate-700">
+              <h3 className="font-bold text-lg">{title}</h3>
+              <button onClick={onClose} className="text-slate-400 hover:text-white text-2xl leading-none">&times;</button>
+            </div>
+            <div className="p-5">{children}</div>
+          </div>
+        </div>
+      );
+    }
+
+    function Field({ label, children }) {
+      return (<label className="block"><span className="text-sm text-slate-400 mb-1 block">{label}</span>{children}</label>);
+    }
+    const inputCls = "w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-blue-500 text-white";
+
+    // --- Add Product Modal ---
+    function AddProductModal({ open, onClose, onCreated }) {
+      const [form, setForm] = useState({ style_number: '', title: '', price: '', stock: '1', description: '' });
+      const [imgPreview, setImgPreview] = useState(null);
+      const [imgData, setImgData] = useState(null);
+      const [saving, setSaving] = useState(false);
+      const [result, setResult] = useState(null);
+      const [error, setError] = useState(null);
+
+      const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+      const pickImage = e => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+        if (file.size > 4500000) { setError('Image must be under 4.5 MB'); return; }
+        const reader = new FileReader();
+        reader.onload = function(ev) {
+          setImgPreview(ev.target.result);
+          setImgData({ base64: ev.target.result.split(',')[1], type: file.type });
+        };
+        reader.readAsDataURL(file);
+      };
+
+      const submit = async () => {
+        if (!form.title || !form.price) { setError('Title and price are required'); return; }
+        setSaving(true); setError(null);
+        try {
+          let pictures = [];
+          if (imgData) {
+            const pic = await fetch('/api/product-manage/upload-picture', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ image_base64: imgData.base64, content_type: imgData.type }),
+            }).then(function(r) { return r.json(); });
+            if (pic.error) throw new Error(pic.error);
+            pictures = [{ id: pic.id }];
+          }
+          const res = await fetch('/api/product-manage/create-product', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              style_number: form.style_number,
+              title: form.title,
+              price: parseFloat(form.price),
+              stock: parseInt(form.stock) || 1,
+              description: form.description,
+              pictures: pictures,
+            }),
+          }).then(function(r) { return r.json(); });
+          if (res.error) throw new Error(res.error);
+          setResult(res);
+          if (onCreated) onCreated();
+        } catch (e) { setError(e.message); }
+        setSaving(false);
+      };
+
+      const reset = () => {
+        setForm({ style_number: '', title: '', price: '', stock: '1', description: '' });
+        setImgPreview(null); setImgData(null); setResult(null); setError(null);
+      };
+
+      return (
+        <Modal open={open} onClose={() => { reset(); onClose(); }} title="Add New Product">
+          {result ? (
+            <div className="text-center py-4 space-y-3">
+              <div className="text-green-400 text-lg font-semibold">Product Created on Mercado Libre</div>
+              <div className="text-sm text-slate-400">Item ID: <span className="font-mono text-slate-300">{result.item_id}</span></div>
+              {result.permalink && <a href={result.permalink} target="_blank" rel="noopener" className="text-blue-400 hover:underline text-sm block">View on Mercado Libre</a>}
+              <div className="pt-3 flex justify-center gap-3">
+                <button onClick={reset} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg">Add Another</button>
+                <button onClick={() => { reset(); onClose(); }} className="px-4 py-2 text-slate-400 hover:text-white text-sm">Done</button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex gap-4">
+                <div className="w-40 shrink-0">
+                  <div className="w-40 h-40 bg-slate-800 border-2 border-dashed border-slate-600 rounded-xl flex items-center justify-center cursor-pointer hover:border-blue-500 transition overflow-hidden"
+                    onClick={() => document.getElementById('prod-img-input').click()}>
+                    {imgPreview
+                      ? <img src={imgPreview} className="w-full h-full object-cover" alt="preview" />
+                      : (<div className="text-center text-slate-500 text-xs p-2">
+                          <svg className="w-8 h-8 mx-auto mb-1" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0022.5 18.75V5.25A2.25 2.25 0 0020.25 3H3.75A2.25 2.25 0 001.5 5.25v13.5A2.25 2.25 0 003.75 21z" /></svg>
+                          Click to upload
+                        </div>)}
+                  </div>
+                  <input id="prod-img-input" type="file" accept="image/*" className="hidden" onChange={pickImage} />
+                </div>
+                <div className="flex-1 space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label="Style Number"><input className={inputCls} value={form.style_number} onChange={e => set('style_number', e.target.value)} placeholder="e.g. 7015" /></Field>
+                    <Field label="Price (MXN)"><input className={inputCls} type="number" value={form.price} onChange={e => set('price', e.target.value)} placeholder="599" /></Field>
+                  </div>
+                  <Field label="Title"><input className={inputCls} value={form.title} onChange={e => set('title', e.target.value)} placeholder="Vestido Sahiba Viscosa Bordado Mujer" /></Field>
+                  <Field label="Stock"><input className={inputCls} type="number" value={form.stock} onChange={e => set('stock', e.target.value)} /></Field>
+                </div>
+              </div>
+              <Field label="Description"><textarea className={inputCls + " h-20 resize-none"} value={form.description} onChange={e => set('description', e.target.value)} placeholder="Product description..." /></Field>
+              {error && <div className="text-red-400 text-sm bg-red-500/10 border border-red-500/30 rounded-lg p-3">{error}</div>}
+              <div className="flex justify-end gap-3 pt-2">
+                <button onClick={() => { reset(); onClose(); }} className="px-4 py-2 text-slate-400 hover:text-white text-sm">Cancel</button>
+                <button onClick={submit} disabled={saving} className="px-6 py-2 bg-green-600 hover:bg-green-700 disabled:bg-slate-700 text-white text-sm rounded-lg flex items-center gap-2">
+                  {saving && <svg className="w-4 h-4 spinner" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeDasharray="30 70" /></svg>}
+                  {saving ? 'Creating...' : 'Create on Mercado Libre'}
+                </button>
+              </div>
+            </div>
+          )}
+        </Modal>
+      );
+    }
+
+    // --- Edit Product Modal ---
+    function EditProductModal({ open, onClose, product, onSaved }) {
+      const [form, setForm] = useState({});
+      const [saving, setSaving] = useState(false);
+      const [error, setError] = useState(null);
+      const [success, setSuccess] = useState(false);
+
+      useEffect(() => {
+        if (product) {
+          setForm({
+            title: product.title || '',
+            price: product.price || '',
+            stock: product.stock != null ? product.stock : '',
+            style_number: product.style_number || '',
+            description: product.description_text || '',
+          });
+          setError(null); setSuccess(false);
+        }
+      }, [product]);
+
+      const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+      const save = async () => {
+        setSaving(true); setError(null); setSuccess(false);
+        try {
+          const res = await fetch('/api/product-manage/update-product', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              external_id: product.external_id,
+              title: form.title,
+              price: parseFloat(form.price),
+              stock: parseInt(form.stock),
+              style_number: form.style_number,
+              description: form.description,
+            }),
+          }).then(function(r) { return r.json(); });
+          if (res.error) throw new Error(res.error);
+          setSuccess(true);
+          if (onSaved) onSaved();
+        } catch (e) { setError(e.message); }
+        setSaving(false);
+      };
+
+      return (
+        <Modal open={open} onClose={onClose} title={"Edit Product"}>
+          <div className="space-y-4">
+            <div className="flex items-center gap-3 mb-2">
+              {product && product.thumbnail && <img src={product.thumbnail} className="w-14 h-14 rounded-lg object-cover" alt="" />}
+              <div className="text-xs text-slate-500 font-mono">{product && product.external_id}</div>
+            </div>
+            <Field label="Style Number"><input className={inputCls} value={form.style_number || ''} onChange={e => set('style_number', e.target.value)} placeholder="e.g. 7015" /></Field>
+            <Field label="Title"><input className={inputCls} value={form.title || ''} onChange={e => set('title', e.target.value)} /></Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Price (MXN)"><input className={inputCls} type="number" value={form.price || ''} onChange={e => set('price', e.target.value)} /></Field>
+              <Field label="Stock"><input className={inputCls} type="number" value={form.stock != null ? form.stock : ''} onChange={e => set('stock', e.target.value)} /></Field>
+            </div>
+            <Field label="Description"><textarea className={inputCls + " h-20 resize-none"} value={form.description || ''} onChange={e => set('description', e.target.value)} /></Field>
+            {error && <div className="text-red-400 text-sm bg-red-500/10 border border-red-500/30 rounded-lg p-3">{error}</div>}
+            {success && <div className="text-green-400 text-sm bg-green-500/10 border border-green-500/30 rounded-lg p-3">Updated on Mercado Libre and synced to CRM</div>}
+            <div className="flex items-center justify-between pt-2">
+              <div>{product && product.permalink && <a href={product.permalink} target="_blank" rel="noopener" className="text-blue-400 hover:underline text-xs">View on ML</a>}</div>
+              <div className="flex gap-3">
+                <button onClick={onClose} className="px-4 py-2 text-slate-400 hover:text-white text-sm">Close</button>
+                <button onClick={save} disabled={saving} className="px-6 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-700 text-white text-sm rounded-lg flex items-center gap-2">
+                  {saving && <svg className="w-4 h-4 spinner" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeDasharray="30 70" /></svg>}
+                  {saving ? 'Saving...' : 'Save to ML & Sync'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </Modal>
+      );
+    }
+
+    // --- Import PDF Modal ---
+    function ImportPdfModal({ open, onClose, onImported }) {
+      const [parsing, setParsing] = useState(false);
+      const [rawText, setRawText] = useState('');
+      const [detected, setDetected] = useState([]);
+      const [importing, setImporting] = useState(false);
+      const [results, setResults] = useState(null);
+      const [error, setError] = useState(null);
+      const [showRaw, setShowRaw] = useState(false);
+
+      const parsePdf = async (e) => {
+        var file = e.target.files && e.target.files[0];
+        if (!file) return;
+        setParsing(true); setError(null);
+        try {
+          var ab = await file.arrayBuffer();
+          var pdf = await pdfjsLib.getDocument(ab).promise;
+          var text = '';
+          for (var i = 1; i <= pdf.numPages; i++) {
+            var page = await pdf.getPage(i);
+            var content = await page.getTextContent();
+            text += content.items.map(function(it) { return it.str; }).join(' ') + '\n';
+          }
+          setRawText(text);
+          var products = [];
+          var lines = text.split('\n').filter(function(l) { return l.trim(); });
+          var cur = null;
+          for (var j = 0; j < lines.length; j++) {
+            var line = lines[j];
+            var styleMatch = line.match(/(?:style|estilo|modelo|#|ref|sku)\s*:?\s*([A-Za-z0-9-]+)/i);
+            var priceMatch = line.match(/\$\s*([\d,]+(?:\.\d{2})?)/);
+            if (styleMatch) {
+              if (cur && cur.style_number) products.push(cur);
+              cur = { style_number: styleMatch[1], title: '', price: '', stock: '1', selected: true };
+            }
+            if (cur) {
+              if (priceMatch && !cur.price) cur.price = priceMatch[1].replace(/,/g, '');
+              if (!cur.title && !styleMatch && line.trim().length > 5 && line.trim().length < 120) cur.title = line.trim();
+            }
+          }
+          if (cur && cur.style_number) products.push(cur);
+          setDetected(products);
+          if (products.length === 0) setShowRaw(true);
+        } catch (ex) { setError('Failed to parse PDF: ' + ex.message); }
+        setParsing(false);
+      };
+
+      const updateRow = (idx, key, val) => setDetected(function(d) { return d.map(function(r, j) { return j === idx ? Object.assign({}, r, { [key]: val }) : r; }); });
+      const toggleRow = (idx) => setDetected(function(d) { return d.map(function(r, j) { return j === idx ? Object.assign({}, r, { selected: !r.selected }) : r; }); });
+
+      const addRow = () => setDetected(function(d) { return d.concat([{ style_number: '', title: '', price: '', stock: '1', selected: true }]); });
+      const removeRow = (idx) => setDetected(function(d) { return d.filter(function(_, j) { return j !== idx; }); });
+
+      const importSelected = async () => {
+        var selected = detected.filter(function(d) { return d.selected && d.title && d.price; });
+        if (!selected.length) { setError('Select at least one product with title and price'); return; }
+        setImporting(true); setError(null);
+        try {
+          var res = await fetch('/api/product-manage/bulk-create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ products: selected }),
+          }).then(function(r) { return r.json(); });
+          if (res.error) throw new Error(res.error);
+          setResults(res.results);
+          if (onImported) onImported();
+        } catch (ex) { setError(ex.message); }
+        setImporting(false);
+      };
+
+      const reset = () => { setRawText(''); setDetected([]); setResults(null); setError(null); setShowRaw(false); };
+
+      return (
+        <Modal open={open} onClose={() => { reset(); onClose(); }} title="Import PDF Catalog" wide>
+          {results ? (
+            <div className="space-y-3">
+              <div className="text-green-400 font-semibold">Import Complete</div>
+              {results.map((r, i) => (
+                <div key={i} className={"flex items-center gap-2 text-sm " + (r.success ? 'text-green-400' : 'text-red-400')}>
+                  <span>{r.success ? '✓' : '✗'}</span>
+                  <span>Style {r.style || '(no style)'}</span>
+                  {r.success
+                    ? <span className="text-slate-500 font-mono text-xs">{r.item_id}</span>
+                    : <span className="text-xs">{(r.error || '').substring(0, 100)}</span>}
+                </div>
+              ))}
+              <button onClick={() => { reset(); onClose(); }} className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg">Done</button>
+            </div>
+          ) : detected.length > 0 || rawText ? (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-slate-400">{detected.length} products {detected.length ? 'detected' : '- add manually below'}</span>
+                <button onClick={() => setShowRaw(!showRaw)} className="text-xs text-blue-400 hover:underline">{showRaw ? 'Hide' : 'Show'} raw text</button>
+              </div>
+              {showRaw && <pre className="text-xs text-slate-500 bg-slate-800 rounded-lg p-3 max-h-40 overflow-auto whitespace-pre-wrap">{rawText || '(no text extracted)'}</pre>}
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-slate-400 border-b border-slate-700">
+                      <th className="py-2 px-2 w-8"></th>
+                      <th className="py-2 px-2">Style #</th>
+                      <th className="py-2 px-2">Title</th>
+                      <th className="py-2 px-2 w-24">Price</th>
+                      <th className="py-2 px-2 w-20">Stock</th>
+                      <th className="py-2 px-2 w-8"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detected.map((d, i) => (
+                      <tr key={i} className="border-b border-slate-800">
+                        <td className="py-1 px-2"><input type="checkbox" checked={d.selected} onChange={() => toggleRow(i)} className="accent-blue-500" /></td>
+                        <td className="py-1 px-2"><input className="bg-slate-800 border border-slate-700 rounded px-2 py-1 w-20 text-xs text-white" value={d.style_number} onChange={e => updateRow(i, 'style_number', e.target.value)} /></td>
+                        <td className="py-1 px-2"><input className="bg-slate-800 border border-slate-700 rounded px-2 py-1 w-full text-xs text-white" value={d.title} onChange={e => updateRow(i, 'title', e.target.value)} /></td>
+                        <td className="py-1 px-2"><input className="bg-slate-800 border border-slate-700 rounded px-2 py-1 w-20 text-xs text-white" type="number" value={d.price} onChange={e => updateRow(i, 'price', e.target.value)} /></td>
+                        <td className="py-1 px-2"><input className="bg-slate-800 border border-slate-700 rounded px-2 py-1 w-16 text-xs text-white" type="number" value={d.stock} onChange={e => updateRow(i, 'stock', e.target.value)} /></td>
+                        <td className="py-1 px-2"><button onClick={() => removeRow(i)} className="text-red-400 hover:text-red-300 text-xs">&times;</button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <button onClick={addRow} className="text-xs text-blue-400 hover:underline">+ Add row manually</button>
+              {error && <div className="text-red-400 text-sm">{error}</div>}
+              <div className="flex justify-end gap-3 pt-2">
+                <button onClick={() => { reset(); onClose(); }} className="px-4 py-2 text-slate-400 hover:text-white text-sm">Cancel</button>
+                <button onClick={importSelected} disabled={importing} className="px-6 py-2 bg-green-600 hover:bg-green-700 disabled:bg-slate-700 text-white text-sm rounded-lg flex items-center gap-2">
+                  {importing && <svg className="w-4 h-4 spinner" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeDasharray="30 70" /></svg>}
+                  {importing ? 'Creating...' : 'Import ' + detected.filter(function(d) { return d.selected; }).length + ' Products to ML'}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <p className="text-sm text-slate-400">Upload a PDF catalog to extract product information. The system will detect style numbers, titles, and prices automatically.</p>
+              <div className="border-2 border-dashed border-slate-600 rounded-xl p-8 text-center hover:border-blue-500 transition cursor-pointer"
+                onClick={() => document.getElementById('pdf-input').click()}>
+                {parsing ? (
+                  <div className="flex flex-col items-center gap-2">
+                    <svg className="w-8 h-8 text-blue-500 spinner" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeDasharray="30 70" /></svg>
+                    <span className="text-sm text-slate-400">Parsing PDF...</span>
+                  </div>
+                ) : (
+                  <div>
+                    <svg className="w-10 h-10 mx-auto mb-2 text-slate-500" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" /></svg>
+                    <div className="text-sm text-slate-400">Click to select a PDF catalog</div>
+                    <div className="text-xs text-slate-600 mt-1">Auto-detects style numbers, titles, and prices</div>
+                  </div>
+                )}
+              </div>
+              <input id="pdf-input" type="file" accept=".pdf" className="hidden" onChange={parsePdf} />
+              {error && <div className="text-red-400 text-sm">{error}</div>}
+            </div>
+          )}
+        </Modal>
       );
     }
 
